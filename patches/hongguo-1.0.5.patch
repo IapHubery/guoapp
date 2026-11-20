@@ -1,0 +1,155 @@
+From 958ef61d8a54541b28b5264ac01fcdd6a3dad86a Mon Sep 17 00:00:00 2001
+From: guoapp <guoapp@example.invalid>
+Date: Fri, 20 Nov 2026 13:55:19 +0800
+Subject: [PATCH] =?UTF-8?q?fix:=20=E7=BA=A2=E6=9E=9C=E5=8F=96=E6=B5=81?=
+ =?UTF-8?q?=E5=A4=B1=E8=B4=A5=EF=BC=8C=E6=92=AD=E6=94=BE=E6=94=B9=E7=94=A8?=
+ =?UTF-8?q?=E6=97=A7=E7=89=88=E5=8C=BF=E5=90=8D=20video=5Fmodel=20?=
+ =?UTF-8?q?=E6=8E=A5=E5=8F=A3=EF=BC=8C=E7=89=88=E6=9C=AC=201.0.5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ main.js                | 13 ++++----
+ manifest.json          |  2 +-
+ test/playback.test.cjs | 69 ++++++++++++++++++++++--------------------
+ 3 files changed, 44 insertions(+), 40 deletions(-)
+
+diff --git a/main.js b/main.js
+index f19df66..a5e1f87 100644
+--- a/main.js
++++ b/main.js
+@@ -46,7 +46,7 @@ const tagPanelCategory = "5000";
+ 
+ const paths = {
+   videoDetail: "/novel/player/video_detail/v1/",
+-  videoModel: "/novel/player/multi_video_model/player/v1",
++  videoModel: "/novel/player/video_model/v1/",
+   landpage: "/reading/distribution/category/landpage/v/",
+   seriesPack: "/reading/distribution/book_pack_fields/inner_feed_detail/v1/",
+   searchTab: "/reading/bookapi/search/tab/v/",
+@@ -2293,15 +2293,14 @@ function appMedia(videoId) {
+ 
+ function fetchAppMedia(videoId, helper) {
+   const payload = {
+-    biz_param: {
+-      detail_page_version: 0, device_level: 1, disable_digg_stat: false, disable_video_relate_book: false,
+-      need_all_video_definition: true, need_mp4_align: false, use_os_player: false, use_server_dns: false, video_platform: 1024,
+-    },
+-    mixed_video_id_map: { "1004": [videoId] }, dr_scene: "player",
++    video_id: videoId, content_type: 1,
++    biz_param: { need_all_video_definition: true, video_platform: 3 },
+   };
+   const result = appRequest("POST", paths.videoModel, null, payload, { helper });
+   const entries = nested(result, "data");
+-  const data = nested(isRecord(entries["1004"]) ? entries["1004"] : entries, videoId);
++  const data = entries.video_model !== undefined || entries.video_list !== undefined
++    ? entries
++    : nested(isRecord(entries["1004"]) ? entries["1004"] : entries, videoId);
+   if (isEmptyRecord(data)) {
+     throw new Error("红果 App 未返回所请求的分集播放信息");
+   }
+diff --git a/manifest.json b/manifest.json
+index 2663a94..95b052b 100644
+--- a/manifest.json
++++ b/manifest.json
+@@ -1,7 +1,7 @@
+ {
+   "id": "hongguo",
+   "name": "红果",
+-  "version": "1.0.4",
++  "version": "1.0.5",
+   "description": "短剧 · 漫剧 · AI 剧 · 听书",
+   "runtime": "js",
+   "api": 1,
+diff --git a/test/playback.test.cjs b/test/playback.test.cjs
+index 3c26c95..eb1882c 100644
+--- a/test/playback.test.cjs
++++ b/test/playback.test.cjs
+@@ -57,46 +57,51 @@ function load(response) {
+   return { api: context.module.exports, requests, context, host };
+ }
+ 
+-for (const nested of [false, true]) {
+-  test("playback uses v5 and the exact episode in " + (nested ? "1004" : "flat") + " responses", () => {
+-    const entries = { [videoId]: { video_model: JSON.stringify(model) }, "7700000000000000002": { video_model: {} } };
+-    const { api, requests } = load({ code: 0, data: nested ? { "1004": entries } : entries });
+-    const media = api.test.fetchAppMedia(videoId, false);
+-    assert.equal(media.url, "https://media.example.invalid/main.mp4");
+-    assert.equal(media.quality, 1080);
+-    assert.equal(media.durationMs, 80500);
+-    assert.equal(media.variants.length, 2);
+-    assert.equal(requests.length, 1);
+-    const request = requests[0];
+-    const url = new URL(request.url);
+-    assert.equal(url.hostname, "api5-normal-sinfonlinea.fqnovel.com");
+-    assert.equal(url.pathname, "/novel/player/multi_video_model/player/v1");
+-    assert.equal(url.searchParams.get("device_id"), state.deviceId);
+-    assert.equal(url.searchParams.get("iid"), state.installId);
+-    assert.equal(url.searchParams.has("ts"), false);
+-    const payload = JSON.parse(request.body);
+-    assert.deepEqual(payload.mixed_video_id_map, { "1004": [videoId] });
+-    assert.equal(payload.dr_scene, "player");
+-    assert.equal(payload.biz_param.video_platform, 1024);
+-    assert.equal(request.headers["X-Gorgon"], undefined);
+-    assert.equal(request.headers["X-Argus"], undefined);
+-    assert(request.headers["X-Medusa"] && request.headers["X-Helios"]);
+-    assert.equal(request.headers["X-SS-STUB"], crypto.createHash("md5").update(request.body).digest("hex").toUpperCase());
+-  });
+-}
++test("playback uses v5 and the anonymous video_model endpoint", () => {
++  const { api, requests } = load({ code: 0, data: { video_model: JSON.stringify(model) } });
++  const media = api.test.fetchAppMedia(videoId, false);
++  assert.equal(media.url, "https://media.example.invalid/main.mp4");
++  assert.equal(media.quality, 1080);
++  assert.equal(media.durationMs, 80500);
++  assert.equal(media.variants.length, 2);
++  assert.equal(requests.length, 1);
++  const request = requests[0];
++  const url = new URL(request.url);
++  assert.equal(url.hostname, "api5-normal-sinfonlinea.fqnovel.com");
++  assert.equal(url.pathname, "/novel/player/video_model/v1/");
++  assert.equal(url.searchParams.get("device_id"), state.deviceId);
++  assert.equal(url.searchParams.get("iid"), state.installId);
++  assert.equal(url.searchParams.has("ts"), false);
++  const payload = JSON.parse(request.body);
++  assert.equal(payload.video_id, videoId);
++  assert.equal(payload.content_type, 1);
++  assert.equal(payload.biz_param.need_all_video_definition, true);
++  assert.equal(payload.biz_param.video_platform, 3);
++  assert.equal(payload.mixed_video_id_map, undefined);
++  assert.equal(request.headers["X-Gorgon"], undefined);
++  assert.equal(request.headers["X-Argus"], undefined);
++  assert(request.headers["X-Medusa"] && request.headers["X-Helios"]);
++  assert.equal(request.headers["X-SS-STUB"], crypto.createHash("md5").update(request.body).digest("hex").toUpperCase());
++});
+ 
+-test("missing requested episode cannot use another episode", () => {
+-  const { api, requests } = load({ code: 0, data: { "7700000000000000002": { video_model: model } } });
++test("nested episode responses still pick the requested episode", () => {
++  const entries = { [videoId]: { video_model: JSON.stringify(model) }, "7700000000000000002": { video_model: {} } };
++  const { api } = load({ code: 0, data: { "1004": entries } });
++  const media = api.test.fetchAppMedia(videoId, false);
++  assert.equal(media.url, "https://media.example.invalid/main.mp4");
++});
++
++test("missing episode model fails explicitly", () => {
++  const { api } = load({ code: 0, data: {} });
+   assert.throws(() => api.test.fetchAppMedia(videoId, false), /所请求的分集/);
+-  assert.equal(requests.length, 1);
+ });
+ 
+ test("malformed and rejected models fail explicitly", () => {
+   for (const encoded of ["broken", "[]", "42"]) {
+-    const { api } = load({ code: 0, data: { [videoId]: { video_model: encoded } } });
++    const { api } = load({ code: 0, data: { video_model: encoded } });
+     assert.throws(() => api.test.fetchAppMedia(videoId, false), /格式异常/);
+   }
+-  const { api } = load({ code: 403, data: { [videoId]: { video_model: model } } });
++  const { api } = load({ code: 403, data: { video_model: model } });
+   assert.throws(() => api.test.fetchAppMedia(videoId, false), /403/);
+ });
+ 
+-- 
+2.51.0.windows.1
+
